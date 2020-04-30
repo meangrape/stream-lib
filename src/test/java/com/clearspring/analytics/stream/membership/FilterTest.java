@@ -19,40 +19,35 @@
 package com.clearspring.analytics.stream.membership;
 
 import java.io.IOException;
+
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 
 import org.junit.Test;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.clearspring.analytics.stream.membership.DataInputBuffer;
-import com.clearspring.analytics.stream.membership.DataOutputBuffer;
+public class FilterTest {
 
-public class FilterTest
-{
-    public void testManyHashes(Iterator<String> keys)
-    {
+    public void testManyHashes(Iterator<String> keys) {
         int MAX_HASH_COUNT = 128;
         Set<Integer> hashes = new HashSet<Integer>();
         int collisions = 0;
-        while (keys.hasNext())
-        {
+        while (keys.hasNext()) {
             hashes.clear();
-            for (int hashIndex : Filter.getHashBuckets(keys.next(), MAX_HASH_COUNT, 1024 * 1024))
-            {
+            for (int hashIndex : Filter.getHashBuckets(keys.next(), MAX_HASH_COUNT, 1024 * 1024)) {
                 hashes.add(hashIndex);
             }
             collisions += (MAX_HASH_COUNT - hashes.size());
         }
-        assertTrue("Collisions: "+collisions, collisions <= 100);
+        assertTrue("Collisions: " + collisions, collisions <= 100);
     }
 
     @Test
-    public void testManyRandom()
-    {
+    public void testManyRandom() {
         testManyHashes(randomKeys());
     }
 
@@ -62,45 +57,37 @@ public class FilterTest
     public static final BloomCalculations.BloomSpecification spec = BloomCalculations.computeBucketsAndK(MAX_FAILURE_RATE);
     static final int ELEMENTS = 10000;
 
-    static final ResetableIterator<String> intKeys()
-    {
+    static final ResetableIterator<String> intKeys() {
         return new KeyGenerator.IntGenerator(ELEMENTS);
     }
 
-    static final ResetableIterator<String> randomKeys()
-    {
+    static final ResetableIterator<String> randomKeys() {
         return new KeyGenerator.RandomStringGenerator(314159, ELEMENTS);
     }
 
-    static final ResetableIterator<String> randomKeys2()
-    {
+    static final ResetableIterator<String> randomKeys2() {
         return new KeyGenerator.RandomStringGenerator(271828, ELEMENTS);
     }
 
-    public static void testFalsePositives(Filter f, ResetableIterator<String> keys, ResetableIterator<String> otherkeys)
-    {
+    public static void testFalsePositives(Filter f, ResetableIterator<String> keys, ResetableIterator<String> otherkeys) {
         assertEquals(keys.size(), otherkeys.size());
 
-        while (keys.hasNext())
-        {
+        while (keys.hasNext()) {
             f.add(keys.next());
         }
 
         int fp = 0;
-        while (otherkeys.hasNext())
-        {
-            if (f.isPresent(otherkeys.next()))
-            {
+        while (otherkeys.hasNext()) {
+            if (f.isPresent(otherkeys.next())) {
                 fp++;
             }
         }
 
         double fp_ratio = fp / (keys.size() * BloomCalculations.probs[spec.bucketsPerElement][spec.K]);
-        assertTrue("FP ratio: "+fp_ratio, fp_ratio < 1.03);
+        assertTrue("FP ratio: " + fp_ratio, fp_ratio < 1.03);
     }
 
-    public static Filter testSerialize(Filter f) throws IOException
-    {
+    public static Filter testSerialize(Filter f) throws IOException {
         f.add("a");
         DataOutputBuffer out = new DataOutputBuffer();
         f.getSerializer().serialize(f, out);

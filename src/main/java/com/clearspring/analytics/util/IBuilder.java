@@ -17,9 +17,9 @@
 package com.clearspring.analytics.util;
 
 
-public interface IBuilder<T>
-{
+public interface IBuilder<T> {
+
     T build();
-    
+
     int sizeof();
 }

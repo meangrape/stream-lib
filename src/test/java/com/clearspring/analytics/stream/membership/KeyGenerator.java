@@ -18,21 +18,27 @@
 */
 package com.clearspring.analytics.stream.membership;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
 import java.util.Iterator;
 import java.util.Random;
 
 public class KeyGenerator {
+
     private static String randomKey(Random r) {
         StringBuilder buffer = new StringBuilder();
         for (int j = 0; j < 16; j++) {
-            buffer.append((char)r.nextInt());
+            buffer.append((char) r.nextInt());
         }
         return buffer.toString();
     }
 
-    static class RandomStringGenerator implements ResetableIterator<String>, Iterable<String>
-    {
+    static class RandomStringGenerator implements ResetableIterator<String>, Iterable<String> {
+
         int i, n, seed;
         Random random;
 
@@ -65,13 +71,13 @@ public class KeyGenerator {
         }
 
         @Override
-        public Iterator<String> iterator()
-        {
+        public Iterator<String> iterator() {
             return this;
         }
     }
 
     static class IntGenerator implements ResetableIterator<String> {
+
         private int i, start, n;
 
         IntGenerator(int n) {
@@ -106,6 +112,7 @@ public class KeyGenerator {
     }
 
     static class WordGenerator implements ResetableIterator<String> {
+
         static int WORDS;
 
         static {

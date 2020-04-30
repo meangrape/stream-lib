@@ -17,34 +17,29 @@
  */
 
 package com.clearspring.analytics.util;
-//package org.apache.cassandra.utils;
 
-//import com.google.common.base.Objects;
+public class Pair<T1, T2> {
 
-public class Pair<T1, T2>
-{
     public final T1 left;
     public final T2 right;
 
-    public Pair(T1 left, T2 right)
-    {
+    public Pair(T1 left, T2 right) {
         this.left = left;
         this.right = right;
     }
 
     @Override
-    public final int hashCode()
-    {
+    public final int hashCode() {
         int hashCode = 31 + (left == null ? 0 : left.hashCode());
-        return 31*hashCode + (right == null ? 0 : right.hashCode());
+        return 31 * hashCode + (right == null ? 0 : right.hashCode());
     }
-    
+
     @Override
-    public final boolean equals(Object o)
-    {
-        if(!(o instanceof Pair))
+    public final boolean equals(Object o) {
+        if (!(o instanceof Pair)) {
             return false;
-        Pair that = (Pair)o;
+        }
+        Pair that = (Pair) o;
         // handles nulls properly
         return equal(left, that.left) && equal(right, that.right);
     }
@@ -54,15 +49,13 @@ public class Pair<T1, T2>
         return a == b || (a != null && a.equals(b));
     }
 
-    
+
     @Override
-    public String toString()
-    {
+    public String toString() {
         return "(" + left + "," + right + ")";
     }
 
-    public static <X, Y> Pair<X, Y> create(X x, Y y)
-    {
+    public static <X, Y> Pair<X, Y> create(X x, Y y) {
         return new Pair<X, Y>(x, y);
     }
 }

@@ -25,26 +25,23 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertFalse;
 
 @RunWith(Parameterized.class)
-public class TestICardinality
-{
+public class TestICardinality {
 
-    private int           N    = 1000000;
-    private ICardinality  cardinalityEstimator;
+    private int N = 1000000;
+    private ICardinality cardinalityEstimator;
     private static Random prng = new Random();
-    private static char[] hex  = "0123456789abcdef".toCharArray();
+    private static char[] hex = "0123456789abcdef".toCharArray();
 
-    public TestICardinality(ICardinality cardinalityEstimator)
-    {
+    public TestICardinality(ICardinality cardinalityEstimator) {
         super();
         this.cardinalityEstimator = cardinalityEstimator;
     }
 
     @Test
-    public void testOffer()
-    {
+    public void testOffer() {
         cardinalityEstimator.offer("A");
         cardinalityEstimator.offer("B");
         cardinalityEstimator.offer("C");
@@ -59,11 +56,11 @@ public class TestICardinality
     }
 
     @Test
-    public void testICardinality()
-    {
+    public void testICardinality() {
         System.out.println("size: " + cardinalityEstimator.sizeof() + " bytes");
-        for (int i = 0; i < N; i++)
+        for (int i = 0; i < N; i++) {
             cardinalityEstimator.offer(streamElement(i));
+        }
 
         long estimate = cardinalityEstimator.cardinality();
         System.out.println(estimate);
@@ -72,23 +69,22 @@ public class TestICardinality
     }
 
     static int se = 0;
-    protected static Object streamElement(int i)
-    {                
+
+    public static Object streamElement(int i) {
         return Long.toHexString(prng.nextLong());
         //return se++;
     }
 
     @Parameters
-    public static Collection<Object[]> regExValues()
-    {
-        return Arrays.asList(new Object[][] {
+    public static Collection<Object[]> regExValues() {
+        return Arrays.asList(new Object[][]{
                 //{ new LinearCounting(65536) }, 
                 //{ new CountThenEstimate() },
-                { new AdaptiveCounting(16) },
+                {new AdaptiveCounting(16)},
                 //{ new LogLog(10) },
                 //{ new LogLog(12) }, 
                 //{ new LogLog(14) },
-                });
+        });
     }
 
 }

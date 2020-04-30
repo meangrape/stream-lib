@@ -16,14 +16,22 @@
 
 package com.clearspring.analytics.stream.cardinality;
 
-import com.clearspring.analytics.hash.MurmurHash;
-import com.clearspring.analytics.util.Bytes;
-import com.clearspring.analytics.util.IBuilder;
-
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInput;
 import java.io.DataInputStream;
+import java.io.DataOutput;
+import java.io.DataOutputStream;
+import java.io.Externalizable;
 import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
 import java.io.Serializable;
+
+import com.clearspring.analytics.hash.MurmurHash;
+import com.clearspring.analytics.util.Bits;
+import com.clearspring.analytics.util.IBuilder;
 
 /**
  * Java implementation of HyperLogLog (HLL) algorithm from this paper:
@@ -41,9 +49,9 @@ import java.io.Serializable;
  * This implementation implements a single counter.  If a large (millions)
  * number of counters are required you may want to refer to:
  * <p/>
- * http://dsiutils.dsi.unimi.it/
+ * http://dsiutils.di.unimi.it/
  * <p/>
- * It has a more complex implmentation of HLL that supports multiple counters
+ * It has a more complex implementation of HLL that supports multiple counters
  * in a single object, drastically reducing the java overhead from creating
  * a large number of objects.
  * <p/>
@@ -51,15 +59,28 @@ import java.io.Serializable;
  * been working on:
  * <p/>
  * https://github.com/yammer/probablyjs
+ * <p>
+ * Note that this implementation does not include the long range correction function
+ * defined in the original paper.  Empirical evidence shows that the correction
+ * function causes more harm than good.
+ * </p>
+ * <p/>
+ * <p>
+ * Users have different motivations to use different types of hashing functions.
+ * Rather than try to keep up with all available hash functions and to remove
+ * the concern of causing future binary incompatibilities this class allows clients
+ * to offer the value in hashed int or long form.  This way clients are free
+ * to change their hash function on their own time line.  We recommend using Google's
+ * Guava Murmur3_128 implementation as it provides good performance and speed when
+ * high precision is required.  In our tests the 32bit MurmurHash function included
+ * in this project is faster and produces better results than the 32 bit murmur3
+ * implementation google provides.
+ * </p>
  */
-public class HyperLogLog implements ICardinality
-{
-    private final static int POW_2_32 = (int) Math.pow(2, 32);
-    private final static int NEGATIVE_POW_2_32 = (int) Math.pow(-2, 32);
+public class HyperLogLog implements ICardinality, Serializable {
 
     private final RegisterSet registerSet;
     private final int log2m;
-    private final int m;
     private final double alphaMM;
 
 
@@ -69,63 +90,43 @@ public class HyperLogLog implements ICardinality
      * @param rsd - the relative standard deviation for the counter.
      *            smaller values create counters that require more space.
      */
-    public HyperLogLog(double rsd)
-    {
-        this.log2m = log2m(rsd);
-        this.m = (int) Math.pow(2, this.log2m);
-        this.registerSet = new RegisterSet(m);
-
-        // See the paper.
-        switch (log2m)
-        {
-            case 4:
-                alphaMM = 0.673 * m * m;
-                break;
-            case 5:
-                alphaMM = 0.697 * m * m;
-                break;
-            case 6:
-                alphaMM = 0.709 * m * m;
-                break;
-            default:
-                alphaMM = (0.7213 / (1 + 1.079 / m)) * m * m;
-        }
+    public HyperLogLog(double rsd) {
+        this(log2m(rsd));
     }
 
-    private static int log2m(double rsd)
-    {
+    private static int log2m(double rsd) {
         return (int) (Math.log((1.106 / rsd) * (1.106 / rsd)) / Math.log(2));
+    }
+
+    private static double rsd(int log2m) {
+        return 1.106 / Math.sqrt(Math.exp(log2m * Math.log(2)));
+    }
+
+    private static double logBase(double exponent, double base) {
+        return Math.log(exponent) / Math.log(base);
+    }
+
+    private static int accuracyToLog2m(double accuracy) {
+        return Math.toIntExact(2 * Math.round(logBase(1.04 / (1 - accuracy), 2)));
+    }
+
+    private static void validateLog2m(int log2m) {
+        if (log2m < 0 || log2m > 30) {
+            throw new IllegalArgumentException("log2m argument is "
+                                               + log2m + " and is outside the range [0, 30]");
+        }
     }
 
     /**
      * Create a new HyperLogLog instance.  The log2m parameter defines the accuracy of
      * the counter.  The larger the log2m the better the accuracy.
      * <p/>
-     * accuracy = 1.04/sqrt(2^log2m)
+     * accuracy = 1 - 1.04/sqrt(2^log2m)
      *
      * @param log2m - the number of bits to use as the basis for the HLL instance
      */
-    public HyperLogLog(int log2m)
-    {
-        this.log2m = log2m;
-        this.m = (int) Math.pow(2, this.log2m);
-        this.registerSet = new RegisterSet(m);
-
-        // See the paper.
-        switch (log2m)
-        {
-            case 4:
-                alphaMM = 0.673 * m * m;
-                break;
-            case 5:
-                alphaMM = 0.697 * m * m;
-                break;
-            case 6:
-                alphaMM = 0.709 * m * m;
-                break;
-            default:
-                alphaMM = (0.7213 / (1 + 1.079 / m)) * m * m;
-        }
+    public HyperLogLog(int log2m) {
+        this(log2m, new RegisterSet(1 << log2m));
     }
 
     /**
@@ -134,230 +135,262 @@ public class HyperLogLog implements ICardinality
      *
      * @param registerSet - the initial values for the register set
      */
-    public HyperLogLog(int log2m, RegisterSet registerSet)
-    {
+    @Deprecated
+    public HyperLogLog(int log2m, RegisterSet registerSet) {
+        validateLog2m(log2m);
         this.registerSet = registerSet;
         this.log2m = log2m;
-        this.m = (int) Math.pow(2, this.log2m);
+        int m = 1 << this.log2m;
 
-        // See the paper.
-        switch (log2m)
-        {
-            case 4:
-                alphaMM = 0.673 * m * m;
-                break;
-            case 5:
-                alphaMM = 0.697 * m * m;
-                break;
-            case 6:
-                alphaMM = 0.709 * m * m;
-                break;
-            default:
-                alphaMM = (0.7213 / (1 + 1.079 / m)) * m * m;
-        }
+        alphaMM = getAlphaMM(log2m, m);
     }
 
-
     @Override
-    public boolean offer(Object o)
-    {
-        final int x = MurmurHash.hash(o.toString().getBytes());
+    public boolean offerHashed(long hashedValue) {
         // j becomes the binary address determined by the first b log2m of x
         // j will be between 0 and 2^log2m
-        final int j = x >>> (Integer.SIZE - log2m);
-        final int r = Integer.numberOfLeadingZeros((x << this.log2m) | (1 << (this.log2m - 1)) + 1) + 1;
-        if (registerSet.get(j) < r)
-        {
-            registerSet.set(j, r);
-            return true;
-        }
-        else
-        {
-            return false;
-        }
+        final int j = (int) (hashedValue >>> (Long.SIZE - log2m));
+        final int r = Long.numberOfLeadingZeros((hashedValue << this.log2m) | (1 << (this.log2m - 1)) + 1) + 1;
+        return registerSet.updateIfGreater(j, r);
+    }
+
+    @Override
+    public boolean offerHashed(int hashedValue) {
+        // j becomes the binary address determined by the first b log2m of x
+        // j will be between 0 and 2^log2m
+        final int j = hashedValue >>> (Integer.SIZE - log2m);
+        final int r = Integer.numberOfLeadingZeros((hashedValue << this.log2m) | (1 << (this.log2m - 1)) + 1) + 1;
+        return registerSet.updateIfGreater(j, r);
+    }
+
+    @Override
+    public boolean offer(Object o) {
+        final int x = MurmurHash.hash(o);
+        return offerHashed(x);
     }
 
 
     @Override
-    public long cardinality()
-    {
+    public long cardinality() {
         double registerSum = 0;
         int count = registerSet.count;
-        for (int j = 0; j < registerSet.count; j++)
-        {
-            registerSum += Math.pow(2, (-1 * registerSet.get(j)));
+        double zeros = 0.0;
+        for (int j = 0; j < registerSet.count; j++) {
+            int val = registerSet.get(j);
+            registerSum += 1.0 / (1 << val);
+            if (val == 0) {
+                zeros++;
+            }
         }
 
         double estimate = alphaMM * (1 / registerSum);
 
-        if (estimate <= (5.0 / 2.0) * count)
-        {
+        if (estimate <= (5.0 / 2.0) * count) {
             // Small Range Estimate
-            double zeros = 0.0;
-            for (int z = 0; z < count; z++)
-            {
-                if (registerSet.get(z) == 0)
-                {
-                    zeros++;
-                }
-            }
-            return Math.round(count * Math.log(count / zeros));
-        }
-        else if (estimate <= (1.0 / 30.0) * POW_2_32)
-        {
-            // Intermedia Range Estimate
+            return Math.round(linearCounting(count, zeros));
+        } else {
             return Math.round(estimate);
         }
-        else if (estimate > (1.0 / 30.0) * POW_2_32)
-        {
-            // Large Range Estimate
-            return Math.round((NEGATIVE_POW_2_32 * Math.log(1 - (estimate / POW_2_32))));
-        }
-        return 0;
     }
 
     @Override
-    public int sizeof()
-    {
+    public int sizeof() {
         return registerSet.size * 4;
     }
 
     @Override
-    public byte[] getBytes() throws IOException
-    {
-        int bytes = registerSet.size * 4;
-        byte[] bArray = new byte[bytes + 8];
+    public byte[] getBytes() throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        DataOutput dos = new DataOutputStream(baos);
+        writeBytes(dos);
+        baos.close();
 
-        Bytes.addByteArray(bArray, 0, log2m);
-        Bytes.addByteArray(bArray, 4, bytes);
-        Bytes.addByteArray(bArray, 8, registerSet.bits());
+        return baos.toByteArray();
+    }
 
-        return bArray;
+    private void writeBytes(DataOutput serializedByteStream) throws IOException {
+        serializedByteStream.writeInt(log2m);
+        serializedByteStream.writeInt(registerSet.size * 4);
+        for (int x : registerSet.readOnlyBits()) {
+            serializedByteStream.writeInt(x);
+        }
+    }
+
+    /**
+     * Add all the elements of the other set to this set.
+     * <p/>
+     * This operation does not imply a loss of precision.
+     *
+     * @param other A compatible Hyperloglog instance (same log2m)
+     * @throws CardinalityMergeException if other is not compatible
+     */
+    public void addAll(HyperLogLog other) throws CardinalityMergeException {
+        if (this.sizeof() != other.sizeof()) {
+            throw new HyperLogLogMergeException("Cannot merge estimators of different sizes");
+        }
+
+        registerSet.merge(other.registerSet);
     }
 
     @Override
-    public ICardinality merge(ICardinality... estimators)
-    {
-        return HyperLogLog.mergeEstimators(prepMerge(estimators));
-    }
+    public ICardinality merge(ICardinality... estimators) throws CardinalityMergeException {
+        HyperLogLog merged = new HyperLogLog(log2m, new RegisterSet(this.registerSet.count));
+        merged.addAll(this);
 
-    protected HyperLogLog[] prepMerge(ICardinality... estimators)
-    {
-        int numEstimators = (estimators == null) ? 0 : estimators.length;
-        HyperLogLog[] lls = new HyperLogLog[numEstimators + 1];
-        if (numEstimators > 0)
-        {
-            for (int i = 0; i < numEstimators; i++)
-            {
-                if (estimators[i] instanceof HyperLogLog)
-                {
-                    lls[i] = (HyperLogLog) estimators[i];
-                }
-                else
-                {
-                    throw new RuntimeException("Unable to merge HyperLogLog with " + estimators[i].getClass().getName());
-                }
-            }
+        if (estimators == null) {
+            return merged;
         }
-        lls[numEstimators] = this;
-        return lls;
-    }
 
-    /**
-     * @param estimators
-     * @return null if no estimators are provided
-     */
-    protected static RegisterSet mergeRegisters(HyperLogLog... estimators)
-    {
-        RegisterSet mergedSet = null;
-        int numEstimators = (estimators == null) ? 0 : estimators.length;
-        if (numEstimators > 0)
-        {
-            int size = estimators[0].sizeof();
-            mergedSet = new RegisterSet((int) Math.pow(2, estimators[0].log2m));
-
-            for (int e = 0; e < numEstimators; e++)
-            {
-                if (estimators[e].sizeof() != size)
-                {
-                    throw new RuntimeException("Cannot merge estimators of different sizes");
-                }
-                HyperLogLog estimator = estimators[e];
-                for (int b = 0; b < mergedSet.count; b++)
-                {
-                    if (estimator.registerSet.get(b) > mergedSet.get(b))
-                    {
-                        mergedSet.set(b, estimator.registerSet.get(b));
-                    }
-                }
+        for (ICardinality estimator : estimators) {
+            if (!(estimator instanceof HyperLogLog)) {
+                throw new HyperLogLogMergeException("Cannot merge estimators of different class");
             }
-        }
-        return mergedSet;
-    }
-
-    /**
-     * Merges estimators to produce an estimator for their combined streams
-     *
-     * @param estimators
-     * @return merged estimator or null if no estimators were provided
-     */
-    public static HyperLogLog mergeEstimators(HyperLogLog... estimators)
-    {
-        HyperLogLog merged = null;
-
-        RegisterSet mergedSet = mergeRegisters(estimators);
-        if (mergedSet != null)
-        {
-            merged = new HyperLogLog(estimators[0].log2m, mergedSet);
+            HyperLogLog hll = (HyperLogLog) estimator;
+            merged.addAll(hll);
         }
 
         return merged;
     }
 
-    public static int[] getBits(byte[] mBytes) throws IOException
-    {
-        int bitSize = mBytes.length / 4;
-        int[] bits = new int[bitSize];
-        DataInputStream dis = new DataInputStream(new ByteArrayInputStream(mBytes));
-        for (int i = 0; i < bitSize; i++)
-        {
-            bits[i] = dis.readInt();
-        }
-        return bits;
+    private Object writeReplace() {
+        return new SerializationHolder(this);
     }
 
-    public static class Builder implements IBuilder<ICardinality>, Serializable
-    {
-        private double rsd;
+    /**
+     * This class exists to support Externalizable semantics for
+     * HyperLogLog objects without having to expose a public
+     * constructor, public write/read methods, or pretend final
+     * fields aren't final.
+     *
+     * In short, Externalizable allows you to skip some of the more
+     * verbose meta-data default Serializable gets you, but still
+     * includes the class name. In that sense, there is some cost
+     * to this holder object because it has a longer class name. I
+     * imagine people who care about optimizing for that have their
+     * own work-around for long class names in general, or just use
+     * a custom serialization framework. Therefore we make no attempt
+     * to optimize that here (eg. by raising this from an inner class
+     * and giving it an unhelpful name).
+     */
+    private static class SerializationHolder implements Externalizable {
 
-        public Builder(double rsd)
-        {
+        HyperLogLog hyperLogLogHolder;
+
+        public SerializationHolder(HyperLogLog hyperLogLogHolder) {
+            this.hyperLogLogHolder = hyperLogLogHolder;
+        }
+
+        /**
+         * required for Externalizable
+         */
+        public SerializationHolder() {
+
+        }
+
+        @Override
+        public void writeExternal(ObjectOutput out) throws IOException {
+            hyperLogLogHolder.writeBytes(out);
+        }
+
+        @Override
+        public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+            hyperLogLogHolder = Builder.build(in);
+        }
+
+        private Object readResolve() {
+            return hyperLogLogHolder;
+        }
+    }
+
+    public static class Builder implements IBuilder<ICardinality>, Serializable {
+        private static final long serialVersionUID = -2567898469253021883L;
+
+        private final double rsd;
+        private transient int log2m;
+
+        /**
+         * Uses the given RSD percentage to determine how many bytes the constructed HyperLogLog will use.
+         *
+         * @deprecated Use {@link #withRsd(double)} instead. This builder's constructors did not match the (already
+         * themselves ambiguous) constructors of the HyperLogLog class, but there is no way to make them match without
+         * risking behavior changes downstream.
+         */
+        @Deprecated
+        public Builder(double rsd) {
+            this.log2m = log2m(rsd);
+            validateLog2m(log2m);
             this.rsd = rsd;
         }
 
-        @Override
-        public HyperLogLog build()
-        {
-            return new HyperLogLog(rsd);
+        /** This constructor is private to prevent behavior change for ambiguous usages. (Legacy support). */
+        private Builder(int log2m) {
+            this.log2m = log2m;
+            validateLog2m(log2m);
+            this.rsd = rsd(log2m);
+        }
+
+        private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+            in.defaultReadObject();
+            this.log2m = log2m(rsd);
         }
 
         @Override
-        public int sizeof()
-        {
-            int log2m = log2m(rsd);
-            int k = (int)Math.pow(2, log2m);
+        public HyperLogLog build() {
+            return new HyperLogLog(log2m);
+        }
+
+        @Override
+        public int sizeof() {
+            int k = 1 << log2m;
             return RegisterSet.getBits(k) * 4;
         }
 
-        public static HyperLogLog build(byte[] bytes) throws IOException
-        {
-            ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
-            DataInputStream oi = new DataInputStream(bais);
-            int log2m = oi.readInt();
-            int size = oi.readInt();
-            byte[] longArrayBytes = new byte[size];
-            oi.readFully(longArrayBytes);
-            return new HyperLogLog(log2m, new RegisterSet((int) Math.pow(2, log2m), getBits(longArrayBytes)));
+        public static Builder withLog2m(int log2m) {
+            return new Builder(log2m);
         }
+
+        public static Builder withRsd(double rsd) {
+            return new Builder(rsd);
+        }
+
+        public static Builder withAccuracy(double accuracy) { return new Builder(accuracyToLog2m(accuracy)); }
+
+        public static HyperLogLog build(byte[] bytes) throws IOException {
+            ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+            return build(new DataInputStream(bais));
+        }
+
+        public static HyperLogLog build(DataInput serializedByteStream) throws IOException {
+            int log2m = serializedByteStream.readInt();
+            int byteArraySize = serializedByteStream.readInt();
+            return new HyperLogLog(log2m,
+                    new RegisterSet(1 << log2m, Bits.getBits(serializedByteStream, byteArraySize)));
+        }
+    }
+
+    @SuppressWarnings("serial")
+    protected static class HyperLogLogMergeException extends CardinalityMergeException {
+
+        public HyperLogLogMergeException(String message) {
+            super(message);
+        }
+    }
+
+    protected static double getAlphaMM(final int p, final int m) {
+        // See the paper.
+        switch (p) {
+            case 4:
+                return 0.673 * m * m;
+            case 5:
+                return 0.697 * m * m;
+            case 6:
+                return 0.709 * m * m;
+            default:
+                return (0.7213 / (1 + 1.079 / m)) * m * m;
+        }
+    }
+
+    protected static double linearCounting(int m, double V) {
+        return m * Math.log(m / V);
     }
 }
